@@ -4,6 +4,9 @@ Musicbrainz Picard wasn't able to use the "genre" tag to rename things, so I wro
 
 Tries to be careful to not destroy/clobber anything.  No warranties of any kind.
 
+Useful:
+cat collisions.txt | while IFS= read -r f; do mp3info -x -F -rm "$f" -p "%F\t%r\n" ; done
+
 Author: Thad Hughes (thad@thadhughes.com)
 """
 import collections
@@ -24,12 +27,14 @@ flags.DEFINE_bool('dry_run', True, '.')
 
 DATE_TO_YEAR = re.compile(r'([12][0-9][0-9][0-9])-[0-1][0-9]-[0-3][0-9]')
 PUNCTUATION = re.compile(r'''[:!@#$%^&*/\\?<>"]''')
-
+MAX_NAME_LENGTH = 60
 
 def normalize_name(name: str, missing_value) -> str:
   if not name:
     return missing_value
   name = PUNCTUATION.sub('_', name)
+  if len(name) > MAX_NAME_LENGTH:
+    name = name[0:MAX_NAME_LENGTH]
   return name
 
 
@@ -109,13 +114,15 @@ def process_mp3s(input_mp3_dir: str, output_mp3_base_dir: str, dry_run: bool):
 
   preexisting_collisions = df.new_filename[~pd.isna(df.collision)]
   if len(preexisting_collisions.index) > 0:
-    logging.error('Pre-existing collections, stopping:\n%s', preexisting_collisions.values)
+    logging.error('Pre-existing collisions, stopping:\n%s', preexisting_collisions.values)
     return
 
   new_filename_counts = df.new_filename.value_counts()
-  collisions = new_filename_counts[new_filename_counts > 2]
+  collisions = new_filename_counts[new_filename_counts > 1]
   if len(collisions.index) > 0:
-    logging.error('Would-be new collisions, stopping:\n%s', collisions)
+    logging.error('Would-be new collisions, stopping.')
+    collisions_df = df[df.new_filename.isin(collisions.index)]
+    print(collisions_df[['original_filename']].to_csv(index=False, header=False, sep='\t'))
     return
 
   df = df[df.name_changed]
@@ -123,7 +130,7 @@ def process_mp3s(input_mp3_dir: str, output_mp3_base_dir: str, dry_run: bool):
     assert '"' not in row.original_filename
     assert '"' not in row.new_filename
     print('mv "%s" "%s"' % (row.original_filename, row.new_filename))
-    assert not os.path.exists(row.new_filename)
+    assert not os.path.exists(row.new_filename), row.new_filename
     if not dry_run:
       os.makedirs(os.path.dirname(row.new_filename), exist_ok=True)
       os.rename(row.original_filename, row.new_filename)
